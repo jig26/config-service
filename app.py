@@ -3,72 +3,61 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import yaml
 import os
+from pathlib import Path
 
 app = FastAPI()
 
-# Allow all origins (grader requirement)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-load_dotenv()
+BASE_DIR = Path(__file__).parent
 
-# ---------------- Defaults ----------------
-config = {
-    "port": 8000,
-    "workers": 1,
-    "debug": False,
-    "log_level": "info",
-    "api_key": "default-secret-000"
-}
-
-# ---------------- YAML ----------------
-with open("config.development.yaml", "r") as f:
-    yaml_cfg = yaml.safe_load(f) or {}
-
-config.update(yaml_cfg)
-
-# ---------------- .env ----------------
-if os.getenv("APP_PORT"):
-    config["port"] = int(os.getenv("APP_PORT"))
-
-if os.getenv("NUM_WORKERS"):
-    config["workers"] = int(os.getenv("NUM_WORKERS"))
-
-# ---------------- OS ENV ----------------
-if "APP_PORT" in os.environ:
-    config["port"] = int(os.environ["APP_PORT"])
-
-if "APP_API_KEY" in os.environ:
-    config["api_key"] = os.environ["APP_API_KEY"]
+load_dotenv(BASE_DIR / ".env")
 
 
-def convert(key, value):
-    if key in ("port", "workers"):
-        return int(value)
-
-    if key == "debug":
-        return str(value).lower() in (
-            "true",
-            "1",
-            "yes",
-            "on",
-        )
-
-    return str(value)
+def to_bool(value):
+    return str(value).lower() in ["true", "1", "yes", "on"]
 
 
 @app.get("/effective-config")
 def effective_config(set: list[str] = Query(default=[])):
 
-    result = config.copy()
+    config = {
+        "port": 8000,
+        "workers": 1,
+        "debug": False,
+        "log_level": "info",
+        "api_key": "default-secret-000"
+    }
+
+    # YAML
+    yaml_file = BASE_DIR / "config.development.yaml"
+
+    if yaml_file.exists():
+        with open(yaml_file, "r") as f:
+            config.update(yaml.safe_load(f) or {})
+
+    # .env
+    if os.getenv("APP_PORT"):
+        config["port"] = int(os.getenv("APP_PORT"))
+
+    if os.getenv("NUM_WORKERS"):
+        config["workers"] = int(os.getenv("NUM_WORKERS"))
+
+    # OS env
+    if os.environ.get("APP_PORT"):
+        config["port"] = int(os.environ["APP_PORT"])
+
+    if os.environ.get("APP_API_KEY"):
+        config["api_key"] = os.environ["APP_API_KEY"]
 
     # CLI overrides
     for item in set:
+
         if "=" not in item:
             continue
 
@@ -77,9 +66,15 @@ def effective_config(set: list[str] = Query(default=[])):
         if key == "NUM_WORKERS":
             key = "workers"
 
-        result[key] = convert(key, value)
+        if key in ["port", "workers"]:
+            config[key] = int(value)
 
-    # Always mask api_key
-    result["api_key"] = "****"
+        elif key == "debug":
+            config[key] = to_bool(value)
 
-    return result
+        else:
+            config[key] = value
+
+    config["api_key"] = "****"
+
+    return config
