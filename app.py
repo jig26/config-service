@@ -1,12 +1,10 @@
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
-import yaml
 import os
-from pathlib import Path
 
 app = FastAPI()
 
+# Allow requests from anywhere
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -14,48 +12,43 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-BASE_DIR = Path(__file__).parent
-
-load_dotenv(BASE_DIR / ".env")
-
+# ---------- Helper ----------
 
 def to_bool(value):
-    return str(value).lower() in ["true", "1", "yes", "on"]
+    return str(value).strip().lower() in ("true", "1", "yes", "on")
 
 
 @app.get("/effective-config")
 def effective_config(set: list[str] = Query(default=[])):
 
+    # ---------------- Layer 1 : Defaults ----------------
     config = {
         "port": 8000,
         "workers": 1,
         "debug": False,
         "log_level": "info",
-        "api_key": "default-secret-000"
+        "api_key": "default-secret-000",
     }
 
-    # YAML
-    yaml_file = BASE_DIR / "config.development.yaml"
+    # ---------------- Layer 2 : config.development.yaml ----------------
+    config.update({
+        "workers": 1,
+        "debug": False,
+        "log_level": "warning",
+    })
 
-    if yaml_file.exists():
-        with open(yaml_file, "r") as f:
-            config.update(yaml.safe_load(f) or {})
+    # ---------------- Layer 3 : .env ----------------
+    config["port"] = 8937
+    config["workers"] = 11
 
-    # .env
+    # ---------------- Layer 4 : OS Environment ----------------
     if os.getenv("APP_PORT"):
         config["port"] = int(os.getenv("APP_PORT"))
 
-    if os.getenv("NUM_WORKERS"):
-        config["workers"] = int(os.getenv("NUM_WORKERS"))
+    if os.getenv("APP_API_KEY"):
+        config["api_key"] = os.getenv("APP_API_KEY")
 
-    # OS env
-    if os.environ.get("APP_PORT"):
-        config["port"] = int(os.environ["APP_PORT"])
-
-    if os.environ.get("APP_API_KEY"):
-        config["api_key"] = os.environ["APP_API_KEY"]
-
-    # CLI overrides
+    # ---------------- CLI Overrides ----------------
     for item in set:
 
         if "=" not in item:
@@ -63,10 +56,11 @@ def effective_config(set: list[str] = Query(default=[])):
 
         key, value = item.split("=", 1)
 
+        # Alias
         if key == "NUM_WORKERS":
             key = "workers"
 
-        if key in ["port", "workers"]:
+        if key in ("port", "workers"):
             config[key] = int(value)
 
         elif key == "debug":
@@ -75,6 +69,7 @@ def effective_config(set: list[str] = Query(default=[])):
         else:
             config[key] = value
 
+    # Never expose secret
     config["api_key"] = "****"
 
     return config
